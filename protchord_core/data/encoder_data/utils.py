@@ -1,0 +1,2155 @@
+# -*- coding: utf-8 -*-
+import copy
+import gc
+from argparse import Namespace
+
+import numpy as np
+
+##################################################################
+# WHEN pretrain with molecule energy, the system/atom reference need
+# to be removed for better NN learning
+
+VOCAB = {
+    "<pad>": 0,  # padding
+    "<unk>": 1,
+    # "2"-"128": 1-127, # atom type
+    "<cell_corner>": 129,  # use for pbc material
+    "L": 130,
+    "A": 131,
+    "G": 132,
+    "V": 133,
+    "S": 134,
+    "E": 135,
+    "R": 136,
+    "T": 137,
+    "I": 138,
+    "D": 139,
+    "P": 140,
+    "K": 141,
+    "Q": 142,
+    "N": 143,
+    "F": 144,
+    "Y": 145,
+    "M": 146,
+    "H": 147,
+    "W": 148,
+    "C": 149,
+    "X": 150,
+    "B": 151,
+    "U": 152,
+    "Z": 153,
+    "O": 154,
+    "-": 155,
+    ".": 156,
+    "<mask>": 157,
+    "m": 157,
+    "<cls>": 158,
+    "<eos>": 159,
+}
+REV_VOCAB = {}
+for key, value in VOCAB.items():
+    REV_VOCAB[value] = key
+
+
+def get_aa_by_id(token_id):
+    result = []
+    for _id in token_id:
+        if _id in REV_VOCAB:
+            result.append(REV_VOCAB[_id])
+        else:
+            result.append(".")
+    return "".join(result)
+
+
+DATA_SPLIT_RATIO = {
+    "buckyball_catcher": [600.0 / 6102, 50.0 / 6102, 1 - 650.0 / 6102],
+    "double_walled_nanotube": [800.0 / 5032, 100.0 / 5032, 1 - 900.0 / 5032],
+    "AT_AT": [3000.0 / 19990, 200.0 / 19990, 1 - 3200.0 / 19990],
+    "AT_AT_CG_CG": [2000.0 / 10153, 200.0 / 10153, 1 - 2200.0 / 10153],
+    "stachyose": [8000.0 / 27138, 800.0 / 27138, 1 - 8800.0 / 27138],
+    "DHA": [8000.0 / 69388, 800.0 / 69388, 1 - 8800.0 / 69388],
+    "Ac_Ala3_NHMe": [6000.0 / 85109, 600.0 / 85109, 1 - 6600.0 / 85109],
+}
+SYSTEM_REF = {
+    "Ac_Ala3_NHMe": -620662.75,
+    "AT_AT": -1154896.6,
+    "AT_AT_CG_CG": -2329950.2,
+    "DHA": -631480.2,
+    "stachyose": -1578839.0,
+    "buckyball_catcher": -2877475.2,  # buckyball_catcher/radius3_broadcast_kmeans
+    "double_walled_nanotube": -7799787.0,  # double_walled_nanotube/radius3_broadcast_kmeans
+}
+
+PM6_ATOM_REFERENCE = {
+    1: -16.369653388041115,
+    2: -2038.9032192465093,
+    3: -204.69851593083877,
+    4: -400.14692331028346,
+    5: -679.0854269648153,
+    6: -1036.9721554229873,
+    7: -1489.7474706309004,
+    8: -2046.7225809457013,
+    9: -2716.664083129007,
+    10: 9.344613136131247e-08,
+    11: -4411.522046504277,
+    12: -5445.027794252672,
+    13: -6598.42237277425,
+    14: -7878.595170132059,
+    15: -9289.90283680892,
+    16: -10834.645744486206,
+    17: -12522.430131665715,
+    18: -14377.801550004617,
+    19: -16324.984854767115,
+    20: -18433.482314760826,
+    21: -20694.025878493154,
+    22: -23120.578878738335,
+    23: -25684.926535826566,
+    24: -28416.540789365128,
+    25: 12693.362010622226,
+    26: 29432.75757436947,
+    27: 23191.034847208277,
+    28: 26678.07937161134,
+    29: -44633.752266805706,
+    30: -48408.86025358135,
+    31: -52372.44082900867,
+    32: -56512.1086703412,
+    33: -60834.79958507835,
+    34: -65342.08279274979,
+    35: -70038.55556303446,
+    36: -77818.83360448085,
+    37: 23422.517109503377,
+    38: 30335.465950950675,
+    39: 11438.346359699213,
+    40: 54831.79791585401,
+    41: 3157.2127044979316,
+    42: 17680.815901486254,
+    43: 58812.13541364664,
+    44: 47486.67444641509,
+    45: 24015.778943982295,
+    46: 33235.438975447134,
+    47: 15612.96573520193,
+    48: 25612.495497244025,
+    49: -10719.68805011228,
+    50: 17069.56347634128,
+    51: -30093.20575884392,
+    52: -31686.01754336678,
+    53: -52917.991568412486,
+    54: 5789.405818086347,
+    55: 26641.29593078723,
+    56: 33375.350872970615,
+    57: -1.7440895029925985e-10,
+    58: -4.403669011008699e-10,
+    59: 2.4427221309771238e-11,
+    60: -1.611272847669496e-10,
+    61: 1.7448591922814817e-11,
+    62: -1.5765862135024423e-11,
+    63: -2.7381310604358195e-11,
+    64: -147.6126453802135,
+    65: -3.182965922014105e-12,
+    66: 7.648592216225725e-12,
+    67: 4.089542656347698e-12,
+    68: -3.3053675014069327e-12,
+    69: 6.169714627282976e-12,
+    70: 0.0,
+    71: -325910.94246112177,
+    72: 36047.27087028866,
+    73: 34403.00501823302,
+    74: 21382.92623941272,
+    75: 10351.142127485778,
+    76: 12753.03823275541,
+    77: 36927.56880202808,
+    78: 48581.5792850649,
+    79: 37692.21889108131,
+    80: 22642.089876440186,
+    81: 19699.368159305486,
+    82: 19386.18078737853,
+    83: 32329.08247818586,
+    84: 0.0,
+    85: 0.0,
+    86: 0.0,
+    87: 0.0,
+    88: 0.0,
+    89: 0.0,
+    90: 0.0,
+    91: 0.0,
+    92: 0.0,
+    93: 0.0,
+    94: 0.0,
+    95: 0.0,
+    96: 0.0,
+    97: 0.0,
+    98: 0.0,
+    99: 0.0,
+    100: 0.0,
+    101: 0.0,
+    102: 0.0,
+    103: 0.0,
+    104: 0.0,
+    105: 0.0,
+    106: 0.0,
+    107: 0.0,
+    108: 0.0,
+    109: 0.0,
+    110: 0.0,
+    111: 0.0,
+    112: 0.0,
+    113: 0.0,
+    114: 0.0,
+    115: 0.0,
+    116: 0.0,
+    117: 0.0,
+    118: 0.0,
+    119: 0.0,
+    120: 0.0,
+    121: 0.0,
+    122: 0.0,
+    123: 0.0,
+    124: 0.0,
+    125: 0.0,
+    126: 0.0,
+    127: 0.0,
+    128: 0.0,
+    129: 0.0,
+}
+PM6_ATOM_REFERENCE_LIST = list(PM6_ATOM_REFERENCE.values())
+
+PM6_ATOM_ENERGY_OUTLIER_LIST = [
+    2,
+    3,
+    4,
+    10,
+    11,
+    12,
+    18,
+    19,
+    20,
+    21,
+    22,
+    23,
+    24,
+    25,
+    26,
+    27,
+    28,
+    29,
+    30,
+    36,
+    37,
+    38,
+    39,
+    40,
+    41,
+    42,
+    43,
+    44,
+    45,
+    46,
+    47,
+    48,
+    54,
+    55,
+    56,
+    57,
+    58,
+    59,
+    60,
+    61,
+    62,
+    63,
+    64,
+    65,
+    66,
+    67,
+    68,
+    69,
+    70,
+    71,
+    72,
+    73,
+    74,
+    75,
+    76,
+    77,
+    78,
+    79,
+    80,
+    81,
+    82,
+    83,
+    84,
+    85,
+    86,
+    87,
+    88,
+    89,
+    90,
+    91,
+    92,
+    93,
+    94,
+    95,
+    96,
+    97,
+    98,
+    99,
+    100,
+    101,
+    102,
+    103,
+    104,
+    105,
+    106,
+    107,
+    108,
+    109,
+    110,
+    111,
+    112,
+    113,
+    114,
+    115,
+    116,
+    117,
+    118,
+    119,
+    120,
+    121,
+    122,
+    123,
+    124,
+    125,
+    126,
+    127,
+    128,
+    129,
+]
+
+WB97XD3_ATOM_ENERGY_OUTLIER_LIST = [
+    2,
+    3,
+    4,
+    10,
+    11,
+    12,
+    18,
+    19,
+    20,
+    21,
+    22,
+    23,
+    24,
+    25,
+    26,
+    27,
+    28,
+    29,
+    30,
+    36,
+    37,
+    38,
+    39,
+    40,
+    41,
+    42,
+    43,
+    44,
+    45,
+    46,
+    47,
+    48,
+    54,
+    55,
+    56,
+    57,
+    58,
+    59,
+    60,
+    61,
+    62,
+    63,
+    64,
+    65,
+    66,
+    67,
+    68,
+    69,
+    70,
+    71,
+    72,
+    73,
+    74,
+    75,
+    76,
+    77,
+    78,
+    79,
+    80,
+    81,
+    82,
+    83,
+    84,
+    85,
+    86,
+    87,
+    88,
+    89,
+    90,
+    91,
+    92,
+    93,
+    94,
+    95,
+    96,
+    97,
+    98,
+    99,
+    100,
+    101,
+    102,
+    103,
+    104,
+    105,
+    106,
+    107,
+    108,
+    109,
+    110,
+    111,
+    112,
+    113,
+    114,
+    115,
+    116,
+    117,
+    118,
+    119,
+    120,
+    121,
+    122,
+    123,
+    124,
+    125,
+    126,
+    127,
+    128,
+    129,
+]
+
+
+# when train ratio is -1, we can use this pre-defined split ratio
+def get_data_defult_config(data_name):
+    # train ratio , val ratio,test ratio can be int or float.
+    has_energy, has_forces, is_pbc = 1, 1, 0
+    unit = 0.0433634  # from kcal/mol - > eV
+    # unit = 1
+    train_ratio, val_ratio, test_ratio = None, None, None
+    if data_name.lower() == "qh9":
+        train_ratio, val_ratio, test_ratio = 0.8, 0.1, 0.1
+        atom_reference = np.zeros([20])
+        system_ref = 0.0
+    elif data_name.lower() == "pubchem5w":
+        train_ratio, val_ratio, test_ratio = 0.8, 0.1, 0.1
+        atom_reference = np.array(
+            [
+                0.0000,
+                -376.3395,
+                0.0000,
+                0.0000,
+                0.0000,
+                0.0000,
+                -23905.9824,
+                -34351.3164,
+                -47201.4062,
+                0.0000,
+                0.0000,
+                0.0000,
+                0.0000,
+                0.0000,
+                0.0000,
+                -214228.1250,
+                -249841.3906,
+            ]
+        )
+        system_ref = 0.0
+    elif data_name.lower() == "oc20":
+        unit = 1
+        atom_reference = np.array(
+            [
+                0.0000,
+                -3.3995,
+                0.0000,
+                0.0000,
+                0.0000,
+                -6.0821,
+                -8.2925,
+                -8.4169,
+                -4.9008,
+                0.0000,
+                0.0000,
+                -1.5417,
+                0.0000,
+                -3.6177,
+                -5.3100,
+                -5.2911,
+                -4.6126,
+                -3.0819,
+                0.0000,
+                -1.5323,
+                -2.4426,
+                -6.7297,
+                -7.7538,
+                -8.3827,
+                -8.4383,
+                -7.8442,
+                -7.1843,
+                -6.2366,
+                -4.8882,
+                -2.9629,
+                -0.6659,
+                -2.5736,
+                -4.0672,
+                -4.4946,
+                -3.8119,
+                0.0000,
+                0.0000,
+                -1.3493,
+                -2.3484,
+                -7.0278,
+                -8.5368,
+                -9.5898,
+                -9.8338,
+                -9.2727,
+                -8.3798,
+                -6.7955,
+                -4.7875,
+                -1.8926,
+                -0.2102,
+                -2.0652,
+                -3.3848,
+                -3.6490,
+                -3.0334,
+                0.0000,
+                0.0000,
+                -1.4970,
+                0.0000,
+                0.0000,
+                0.0000,
+                0.0000,
+                0.0000,
+                0.0000,
+                0.0000,
+                0.0000,
+                0.0000,
+                0.0000,
+                0.0000,
+                0.0000,
+                0.0000,
+                0.0000,
+                0.0000,
+                0.0000,
+                -9.9214,
+                -11.1467,
+                -11.6672,
+                -11.0532,
+                -10.1330,
+                -8.2885,
+                -5.7752,
+                -2.6926,
+                0.2878,
+                -1.8088,
+                -3.0232,
+                -3.3307,
+                0.0000,
+                0.0000,
+                0.0000,
+                0.0000,
+                0.0000,
+                0.0000,
+                0.0000,
+            ]
+        )
+        system_ref = 0.0
+        has_energy, has_forces, is_pbc = 1, 1, 1
+    elif data_name.lower() == "mattersim":
+        # unit = 1 / 0.0433634  # use kcal/mol as unit
+        atom_reference = np.zeros([20])
+        system_ref = 0.0
+        has_energy, has_forces, is_pbc = 1, 1, 1
+    elif data_name.lower() == "spice":
+        # unit = 1
+        atom_reference = np.array(
+            [
+                0.0000e00,
+                -3.7092e02,
+                0.0000e00,
+                -4.6022e03,
+                0.0000e00,
+                -1.5665e04,
+                -2.3935e04,
+                -3.4383e04,
+                -4.7234e04,
+                -6.2692e04,
+                0.0000e00,
+                -1.0179e05,
+                -1.2511e05,
+                0.0000e00,
+                -1.8178e05,
+                -2.1428e05,
+                -2.4990e05,
+                -2.8884e05,
+                0.0000e00,
+                -3.7648e05,
+                -4.2486e05,
+                0.0000e00,
+                0.0000e00,
+                0.0000e00,
+                0.0000e00,
+                0.0000e00,
+                0.0000e00,
+                0.0000e00,
+                0.0000e00,
+                0.0000e00,
+                0.0000e00,
+                0.0000e00,
+                0.0000e00,
+                0.0000e00,
+                0.0000e00,
+                -1.6153e06,
+                0.0000e00,
+                0.0000e00,
+                0.0000e00,
+                0.0000e00,
+                0.0000e00,
+                0.0000e00,
+                0.0000e00,
+                0.0000e00,
+                0.0000e00,
+                0.0000e00,
+                0.0000e00,
+                0.0000e00,
+                0.0000e00,
+                0.0000e00,
+                0.0000e00,
+                0.0000e00,
+                0.0000e00,
+                -1.8675e05,
+            ]
+        )
+        system_ref = 0.0
+    elif data_name.lower() in ["deshaw", "deshaw_120", "deshaw_400", "deshaw_650"]:
+        # unit = 1
+        atom_reference = np.array(
+            [
+                0.0000,
+                -366.5363,
+                0.0000,
+                0.0000,
+                0.0000,
+                0.0000,
+                -23896.9922,
+                -34311.2500,
+                -47173.9297,
+                0.0000,
+                0.0000,
+                -101742.2188,
+                0.0000,
+                0.0000,
+                0.0000,
+                0.0000,
+                -249763.8750,
+                -288754.4062,
+            ]
+        )
+        system_ref = 0.0
+    elif data_name.lower() == "gems":
+        # unit = 1
+        # atom_reference = np.zeros([20])
+        atom_reference = np.array(
+            [
+                0.0000,
+                -53.37939453,
+                0.0000,
+                0.0000,
+                0.0000,
+                0.0000,
+                -174.86627197,
+                -93.69719696,
+                -121.22570801,
+                0.0000,
+                0.0000,
+                0.0000,
+                0.0000,
+                0.0000,
+                0.0000,
+                0.0000,
+                -70.425354,
+                0.0000,
+            ]
+        )
+        system_ref = 0.0
+        train_ratio, val_ratio, test_ratio = 0.8, 0.1, 0.1
+    elif data_name.lower() == "oc20":
+        unit = 1
+        atom_reference = np.array(
+            [
+                0.0000,
+                -3.3995,
+                0.0000,
+                0.0000,
+                0.0000,
+                -6.0821,
+                -8.2925,
+                -8.4169,
+                -4.9008,
+                0.0000,
+                0.0000,
+                -1.5417,
+                0.0000,
+                -3.6177,
+                -5.3100,
+                -5.2911,
+                -4.6126,
+                -3.0819,
+                0.0000,
+                -1.5323,
+                -2.4426,
+                -6.7297,
+                -7.7538,
+                -8.3827,
+                -8.4383,
+                -7.8442,
+                -7.1843,
+                -6.2366,
+                -4.8882,
+                -2.9629,
+                -0.6659,
+                -2.5736,
+                -4.0672,
+                -4.4946,
+                -3.8119,
+                0.0000,
+                0.0000,
+                -1.3493,
+                -2.3484,
+                -7.0278,
+                -8.5368,
+                -9.5898,
+                -9.8338,
+                -9.2727,
+                -8.3798,
+                -6.7955,
+                -4.7875,
+                -1.8926,
+                -0.2102,
+                -2.0652,
+                -3.3848,
+                -3.6490,
+                -3.0334,
+                0.0000,
+                0.0000,
+                -1.4970,
+                0.0000,
+                0.0000,
+                0.0000,
+                0.0000,
+                0.0000,
+                0.0000,
+                0.0000,
+                0.0000,
+                0.0000,
+                0.0000,
+                0.0000,
+                0.0000,
+                0.0000,
+                0.0000,
+                0.0000,
+                -9.9214,
+                -11.1467,
+                -11.6672,
+                -11.0532,
+                -10.1330,
+                -8.2885,
+                -5.7752,
+                -2.6926,
+                0.2878,
+                -1.8088,
+                -3.0232,
+                -3.3307,
+                0.0000,
+                0.0000,
+                0.0000,
+                0.0000,
+                0.0000,
+                0.0000,
+                0.0000,
+            ]
+        )
+        system_ref = 0.0
+        has_energy, has_forces, is_pbc = 1, 1, 1
+    elif data_name.lower() == "mattersim":
+        atom_reference = np.zeros([20])
+        system_ref = 0.0
+        has_energy, has_forces, is_pbc = 1, 1, 1
+    else:
+        atom_reference = np.zeros([20])
+        system_ref = SYSTEM_REF[data_name]
+        train_ratio, val_ratio, test_ratio = DATA_SPLIT_RATIO[data_name]
+    return (
+        atom_reference,
+        system_ref,
+        train_ratio,
+        val_ratio,
+        test_ratio,
+        has_energy,
+        has_forces,
+        is_pbc,
+        unit,
+    )
+
+
+##################################################################
+# hamitonian related utility functions
+def get_conv_variable(basis="def2-tzvp"):
+    # str2order = {"s":0,"p":1,"d":2,"f":3}
+    chemical_symbols = [
+        "n",
+        "H",
+        "He",
+        "Li",
+        "Be",
+        "B",
+        "C",
+        "N",
+        "O",
+        "F",
+        "Ne",
+        "Na",
+        "Mg",
+        "Al",
+        "Si",
+        "P",
+        "S",
+        "Cl",
+        "Ar",
+        "K",
+        "Ca",
+        "Sc",
+        "Ti",
+        "V",
+        "Cr",
+        "Mn",
+        "Fe",
+        "Co",
+        "Ni",
+        "Cu",
+        "Zn",
+        "Ga",
+        "Ge",
+        "As",
+        "Se",
+        "Br",
+        "Kr",
+        "Rb",
+        "Sr",
+        "Y",
+        "Zr",
+        "Nb",
+        "Mo",
+        "Tc",
+        "Ru",
+        "Rh",
+        "Pd",
+        "Ag",
+        "Cd",
+        "In",
+        "Sn",
+        "Sb",
+        "Te",
+        "I",
+        "Xe",
+        "Cs",
+        "Ba",
+        "La",
+        "Ce",
+        "Pr",
+        "Nd",
+        "Pm",
+        "Sm",
+        "Eu",
+        "Gd",
+        "Tb",
+        "Dy",
+        "Ho",
+        "Er",
+        "Tm",
+        "Yb",
+        "Lu",
+        "Hf",
+        "Ta",
+        "W",
+        "Re",
+        "Os",
+        "Ir",
+        "Pt",
+        "Au",
+        "Hg",
+        "Tl",
+        "Pb",
+        "Bi",
+        "Po",
+        "At",
+        "Rn",
+        "Fr",
+        "Ra",
+        "Ac",
+        "Th",
+        "Pa",
+        "U",
+        "Np",
+        "Pu",
+        "Am",
+        "Cm",
+        "Bk",
+        "Cf",
+        "Es",
+        "Fm",
+        "Md",
+        "No",
+        "Lr",
+        "Rf",
+        "Db",
+        "Sg",
+        "Bh",
+        "Hs",
+        "Mt",
+        "Ds",
+        "Rg",
+        "Cn",
+        "Nh",
+        "Fl",
+        "Mc",
+        "Lv",
+        "Ts",
+        "Og",
+    ]
+
+    convention_dict = {
+        "def2-tzvp": Namespace(
+            atom_to_orbitals_map={
+                1: "sssp",
+                6: "ssssspppddf",
+                7: "ssssspppddf",
+                8: "ssssspppddf",
+                9: "ssssspppddf",
+                15: "ssssspppppddf",
+                16: "ssssspppppddf",
+                17: "ssssspppppddf",
+            },
+            orbital_idx_map={
+                "s": [0],
+                "p": [1, 2, 0],
+                "d": [0, 1, 2, 3, 4],
+                "f": [0, 1, 2, 3, 4, 5, 6],
+            },
+            orbital_sign_map={
+                "s": [1],
+                "p": [1, 1, 1],
+                "d": [1, 1, 1, 1, 1],
+                "f": [1, 1, 1, 1, 1, 1, 1],
+            },
+            max_block_size=37,
+            orbital_order_map={
+                1: [0, 1, 2, 3],
+                6: list(range(11)),
+                7: list(range(11)),
+                8: list(range(11)),
+                9: list(range(11)),
+                15: list(range(13)),
+                16: list(range(13)),
+                17: list(range(13)),
+            },
+        ),
+        # 'back2pyscf': Namespace(
+        #     atom_to_orbitals_map={1: 'sssp', 6: 'ssssspppddf', 7: 'ssssspppddf', 8: 'ssssspppddf',
+        #                            9: 'ssssspppddf', 15: 'ssssspppppddf', 16: 'ssssspppppddf',
+        #                            17: 'ssssspppppddf'},
+        #     orbital_idx_map={'s': [0], 'p': [2, 0, 1], 'd': [0, 1, 2, 3, 4], 'f': [0, 1, 2, 3, 4, 5, 6]},
+        #     orbital_sign_map={'s': [1], 'p': [1, 1, 1], 'd': [1, 1, 1, 1, 1], 'f': [1, 1, 1, 1, 1, 1, 1]},
+        #     orbital_order_map={
+        #         1: [0, 1, 2, 3], 6: list(range(11)), 7: list(range(11)),
+        #         8: list(range(11)), 9: list(range(11)), 15: list(range(13)),
+        #         16: list(range(13)), 17: list(range(13)),
+        #     },
+        # ),
+    }
+
+    # orbital reference (for def2tzvp basis)
+    orbitals_ref = {}
+    mask = {}
+    if basis == "def2-tzvp":
+        orbitals_ref[1] = np.array([0, 0, 0, 1])  # H: 2s 1p
+        orbitals_ref[6] = np.array([0, 0, 0, 0, 0, 1, 1, 1, 2, 2, 3])  # C: 3s 2p 1d
+        orbitals_ref[7] = np.array([0, 0, 0, 0, 0, 1, 1, 1, 2, 2, 3])  # N: 3s 2p 1d
+        orbitals_ref[8] = np.array([0, 0, 0, 0, 0, 1, 1, 1, 2, 2, 3])  # O: 3s 2p 1d
+        orbitals_ref[9] = np.array([0, 0, 0, 0, 0, 1, 1, 1, 2, 2, 3])  # F: 3s 2p 1d
+        orbitals_ref[15] = np.array([0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 2, 2, 3])  # P
+        orbitals_ref[16] = np.array([0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 2, 2, 3])  # S
+        orbitals_ref[17] = np.array([0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 2, 2, 3])  # Cl
+        # 0,1,2,3,4,(5,6,7)(8,9,10)(11,12,13)(14,15,16)(17,18,19)(20,21,22,23,24)(25,26,27,28,29)(30,31,32,33,34,35,36)
+        mask[1] = np.array([0, 1, 2, 5, 6, 7])
+        mask[6] = np.array(
+            [
+                0,
+                1,
+                2,
+                3,
+                4,
+                5,
+                6,
+                7,
+                8,
+                9,
+                10,
+                11,
+                12,
+                13,
+                20,
+                21,
+                22,
+                23,
+                24,
+                25,
+                26,
+                27,
+                28,
+                29,
+                30,
+                31,
+                32,
+                33,
+                34,
+                35,
+                36,
+            ]
+        )
+        mask[7] = np.array(
+            [
+                0,
+                1,
+                2,
+                3,
+                4,
+                5,
+                6,
+                7,
+                8,
+                9,
+                10,
+                11,
+                12,
+                13,
+                20,
+                21,
+                22,
+                23,
+                24,
+                25,
+                26,
+                27,
+                28,
+                29,
+                30,
+                31,
+                32,
+                33,
+                34,
+                35,
+                36,
+            ]
+        )
+        mask[8] = np.array(
+            [
+                0,
+                1,
+                2,
+                3,
+                4,
+                5,
+                6,
+                7,
+                8,
+                9,
+                10,
+                11,
+                12,
+                13,
+                20,
+                21,
+                22,
+                23,
+                24,
+                25,
+                26,
+                27,
+                28,
+                29,
+                30,
+                31,
+                32,
+                33,
+                34,
+                35,
+                36,
+            ]
+        )
+        mask[9] = np.array(
+            [
+                0,
+                1,
+                2,
+                3,
+                4,
+                5,
+                6,
+                7,
+                8,
+                9,
+                10,
+                11,
+                12,
+                13,
+                20,
+                21,
+                22,
+                23,
+                24,
+                25,
+                26,
+                27,
+                28,
+                29,
+                30,
+                31,
+                32,
+                33,
+                34,
+                35,
+                36,
+            ]
+        )
+        mask[15] = np.array(
+            [
+                0,
+                1,
+                2,
+                3,
+                4,
+                5,
+                6,
+                7,
+                8,
+                9,
+                10,
+                11,
+                12,
+                13,
+                14,
+                15,
+                16,
+                17,
+                18,
+                19,
+                20,
+                21,
+                22,
+                23,
+                24,
+                25,
+                26,
+                27,
+                28,
+                29,
+                30,
+                31,
+                32,
+                33,
+                34,
+                35,
+                36,
+            ]
+        )
+        mask[16] = np.array(
+            [
+                0,
+                1,
+                2,
+                3,
+                4,
+                5,
+                6,
+                7,
+                8,
+                9,
+                10,
+                11,
+                12,
+                13,
+                14,
+                15,
+                16,
+                17,
+                18,
+                19,
+                20,
+                21,
+                22,
+                23,
+                24,
+                25,
+                26,
+                27,
+                28,
+                29,
+                30,
+                31,
+                32,
+                33,
+                34,
+                35,
+                36,
+            ]
+        )
+        mask[17] = np.array(
+            [
+                0,
+                1,
+                2,
+                3,
+                4,
+                5,
+                6,
+                7,
+                8,
+                9,
+                10,
+                11,
+                12,
+                13,
+                14,
+                15,
+                16,
+                17,
+                18,
+                19,
+                20,
+                21,
+                22,
+                23,
+                24,
+                25,
+                26,
+                27,
+                28,
+                29,
+                30,
+                31,
+                32,
+                33,
+                34,
+                35,
+                36,
+            ]
+        )
+
+    return convention_dict[basis], orbitals_ref, mask, chemical_symbols
+
+
+def matrix_transform(hamiltonian, atoms, conv):
+    orbitals = ""
+    orbitals_order = []
+    for a in atoms:
+        offset = len(orbitals_order)
+        orbitals += conv.atom_to_orbitals_map[a.item()]
+        orbitals_order += [idx + offset for idx in conv.orbital_order_map[a.item()]]
+
+    transform_indices = []
+    transform_signs = []
+    for orb in orbitals:
+        offset = sum(map(len, transform_indices))
+        map_idx = conv.orbital_idx_map[orb]
+        map_sign = conv.orbital_sign_map[orb]
+        transform_indices.append(np.array(map_idx) + offset)
+        transform_signs.append(np.array(map_sign))
+
+    transform_indices = [transform_indices[idx] for idx in orbitals_order]
+    transform_signs = [transform_signs[idx] for idx in orbitals_order]
+    transform_indices = np.concatenate(transform_indices).astype(np.int32)
+    transform_signs = np.concatenate(transform_signs)
+
+    hamiltonian_new = hamiltonian[..., transform_indices, :]
+    hamiltonian_new = hamiltonian_new[..., :, transform_indices]
+    hamiltonian_new = hamiltonian_new * transform_signs[:, None]
+    hamiltonian_new = hamiltonian_new * transform_signs[None, :]
+
+    return hamiltonian_new
+
+
+def split2blocks(H, C, Z, orbitals_ref, mask, block_size):
+    local_orbitals = []
+    local_orbitals_number = 0
+    Z = Z.reshape(-1)
+    for z in Z:
+        local_orbitals.append(tuple((int(z), int(l)) for l in orbitals_ref[z.item()]))
+        local_orbitals_number += sum(2 * l + 1 for _, l in local_orbitals[-1])
+
+    orbitals = local_orbitals
+
+    # atom2orbitals = dict()
+    Norb = 0
+    begin_index_dict = []
+    end_index_dict = []
+    for i in range(len(orbitals)):
+        begin_index_dict.append(Norb)
+        for z, l in orbitals[i]:
+            Norb += 2 * l + 1
+        end_index_dict.append(Norb)
+        # if z not in atom2orbitals:
+        #     atom2orbitals[z] = orbitals[i]
+
+    # max_len = max(len(orbit) for orbit in atom2orbitals.values())
+    # atom_orb = np.zeros((max(atom2orbitals.keys())+1, max_len), dtype=np.int64)
+    # for key, value in atom2orbitals.items():
+    #     atom_orb[key, :len(value)] = np.array([it[1] for it in value], dtype=np.int64)
+
+    # block_size = 37#np.int32((atom_orb*2+1).sum(axis=1).max())
+    matrix_diag = np.zeros((Z.shape[0], block_size, block_size), dtype=np.float32)
+    matrix_non_diag = np.zeros(
+        (Z.shape[0] * (Z.shape[0] - 1), block_size, block_size), dtype=np.float32
+    )
+    matrix_diag_init = np.zeros((Z.shape[0], block_size, block_size), dtype=np.float32)
+    matrix_non_diag_init = np.zeros(
+        (Z.shape[0] * (Z.shape[0] - 1), block_size, block_size), dtype=np.float32
+    )
+    mask_diag = np.zeros((Z.shape[0], block_size, block_size), dtype=np.float32)
+    mask_non_diag = np.zeros(
+        (Z.shape[0] * (Z.shape[0] - 1), block_size, block_size), dtype=np.float32
+    )
+    non_diag_index = 0
+    for i in range(len(orbitals)):  # loop over rows
+        for j in range(len(orbitals)):  # loop over columns
+            z1 = orbitals[i][0][0]
+            z2 = orbitals[j][0][0]
+            mask1 = mask[z1]
+            mask2 = mask[z2]
+            if i == j:
+                subblock_H = H[
+                    begin_index_dict[i] : end_index_dict[i],
+                    begin_index_dict[j] : end_index_dict[j],
+                ]
+                subblock_C = C[
+                    begin_index_dict[i] : end_index_dict[i],
+                    begin_index_dict[j] : end_index_dict[j],
+                ]
+                matrix_diag[i][np.ix_(mask1, mask2)] = subblock_H
+                matrix_diag_init[i][np.ix_(mask1, mask2)] = subblock_C
+                mask_diag[i] = matrix_diag[i] != 0
+
+            else:
+                subblock_H = H[
+                    begin_index_dict[i] : end_index_dict[i],
+                    begin_index_dict[j] : end_index_dict[j],
+                ]
+                subblock_C = C[
+                    begin_index_dict[i] : end_index_dict[i],
+                    begin_index_dict[j] : end_index_dict[j],
+                ]
+                matrix_non_diag[non_diag_index][np.ix_(mask1, mask2)] = subblock_H
+                matrix_non_diag_init[non_diag_index][np.ix_(mask1, mask2)] = subblock_C
+                mask_non_diag[non_diag_index] = matrix_non_diag[non_diag_index] != 0
+                non_diag_index += 1
+    return (
+        matrix_diag,
+        matrix_non_diag,
+        matrix_diag_init,
+        matrix_non_diag_init,
+        mask_diag,
+        mask_non_diag,
+    )
+
+
+# pyscf px py pz
+# tp: py pz px
+STR2ORDER = {"s": 0, "p": 1, "d": 2, "f": 3}
+
+CHEMICAL_SYMBOLS = [
+    "n",
+    "H",
+    "He",
+    "Li",
+    "Be",
+    "B",
+    "C",
+    "N",
+    "O",
+    "F",
+    "Ne",
+    "Na",
+    "Mg",
+    "Al",
+    "Si",
+    "P",
+    "S",
+    "Cl",
+    "Ar",
+    "K",
+    "Ca",
+    "Sc",
+    "Ti",
+    "V",
+    "Cr",
+    "Mn",
+    "Fe",
+    "Co",
+    "Ni",
+    "Cu",
+    "Zn",
+    "Ga",
+    "Ge",
+    "As",
+    "Se",
+    "Br",
+    "Kr",
+    "Rb",
+    "Sr",
+    "Y",
+    "Zr",
+    "Nb",
+    "Mo",
+    "Tc",
+    "Ru",
+    "Rh",
+    "Pd",
+    "Ag",
+    "Cd",
+    "In",
+    "Sn",
+    "Sb",
+    "Te",
+    "I",
+    "Xe",
+    "Cs",
+    "Ba",
+    "La",
+    "Ce",
+    "Pr",
+    "Nd",
+    "Pm",
+    "Sm",
+    "Eu",
+    "Gd",
+    "Tb",
+    "Dy",
+    "Ho",
+    "Er",
+    "Tm",
+    "Yb",
+    "Lu",
+    "Hf",
+    "Ta",
+    "W",
+    "Re",
+    "Os",
+    "Ir",
+    "Pt",
+    "Au",
+    "Hg",
+    "Tl",
+    "Pb",
+    "Bi",
+    "Po",
+    "At",
+    "Rn",
+    "Fr",
+    "Ra",
+    "Ac",
+    "Th",
+    "Pa",
+    "U",
+    "Np",
+    "Pu",
+    "Am",
+    "Cm",
+    "Bk",
+    "Cf",
+    "Es",
+    "Fm",
+    "Md",
+    "No",
+    "Lr",
+    "Rf",
+    "Db",
+    "Sg",
+    "Bh",
+    "Hs",
+    "Mt",
+    "Ds",
+    "Rg",
+    "Cn",
+    "Nh",
+    "Fl",
+    "Mc",
+    "Lv",
+    "Ts",
+    "Og",
+]
+
+CONVENTION_DICT = {
+    "def2-tzvp": Namespace(
+        atom_to_orbitals_map={
+            1: "sssp",
+            6: "ssssspppddf",
+            7: "ssssspppddf",
+            8: "ssssspppddf",
+            9: "ssssspppddf",
+            15: "ssssspppppddf",
+            16: "ssssspppppddf",
+            17: "ssssspppppddf",
+        },
+        # as 17 is the atom with biggest orbitals, 5*1+5*3+2*5+1*7, thus s ~[0,5) p~[5,5+15) d~[20,20+2*5) f~[30,37)
+        # thus max_block_size is 37
+        str2idx={
+            "s": 0,
+            "p": 0 + 5 * 1,
+            "d": 0 + 5 * 1 + 5 * 3,
+            "f": 0 + 5 * 1 + 5 * 3 + 2 * 5,
+        },
+        max_block_size=37,
+        orbital_idx_map={
+            "s": np.array([0]),
+            "p": np.array([2, 0, 1]),
+            "d": np.array([0, 1, 2, 3, 4]),
+            "f": np.array([0, 1, 2, 3, 4, 5, 6]),
+        },
+    ),
+    "def2-svp": Namespace(
+        atom_to_orbitals_map={
+            1: "ssp",
+            6: "sssppd",
+            7: "sssppd",
+            8: "sssppd",
+            9: "sssppd",
+        },
+        # as 17 is the atom with biggest orbitals, 5*1+5*3+2*5+1*7, thus s ~[0,5) p~[5,5+15) d~[20,20+2*5) f~[30,37)
+        # thus max_block_size is 37
+        str2idx={"s": 0, "p": 0 + 3 * 1, "d": 0 + 3 * 1 + 2 * 3},
+        max_block_size=14,
+        orbital_idx_map={
+            "s": np.array([0]),
+            "p": np.array([2, 0, 1]),
+            "d": np.array([0, 1, 2, 3, 4]),
+        },
+    ),
+}
+
+
+def get_conv_variable_lin(basis="def2-tzvp"):
+    # str2order = {"s":0,"p":1,"d":2,"f":3}
+    conv = CONVENTION_DICT[basis]
+    mask = {}
+    for atom in conv.atom_to_orbitals_map:
+        mask[atom] = []
+        orb_id = 0
+        visited_orbital = set()
+        for s in conv.atom_to_orbitals_map[atom]:
+            if s not in visited_orbital:
+                visited_orbital.add(s)
+                orb_id = conv.str2idx[s]
+
+            mask[atom].extend(conv.orbital_idx_map[s] + orb_id)
+            orb_id += len(conv.orbital_idx_map[s])
+    for key in mask:
+        mask[key] = np.array(mask[key])
+    return conv, None, mask, None
+
+
+def matrixtoblock_lin(H, Z, mask_lin, max_block_size, sym=False):
+    """_summary_
+
+    Args:
+        H (_type_): _description_
+        Z (_type_): _description_
+        mask_lin (_type_): _description_
+
+    Returns:
+        _type_: _description_
+    """
+    n_atom = len(Z)
+    Z = Z.reshape(-1)
+    new_H = np.zeros(
+        (n_atom * max_block_size, n_atom * max_block_size), dtype=np.float32
+    )
+    new_mask = np.zeros(
+        (n_atom * max_block_size, n_atom * max_block_size), dtype=np.float32
+    )
+    atom_orbitals = []
+    for i in range(n_atom):
+        atom_orbitals.append(i * max_block_size + mask_lin[Z[i]])
+    atom_orbitals = np.concatenate(atom_orbitals, axis=0)
+    new_H_tmp = np.zeros((n_atom * max_block_size, len(atom_orbitals)))
+    new_mask_tmp = np.zeros((n_atom * max_block_size, len(atom_orbitals)))
+
+    new_mask_tmp[atom_orbitals] = 1
+    new_mask[:, atom_orbitals] = new_mask_tmp
+    new_mask = new_mask.reshape(n_atom, max_block_size, n_atom, max_block_size)
+    new_mask = new_mask.transpose(0, 2, 1, 3)
+
+    # new_H[atom_orbitals][:,atom_orbitals] = H
+
+    new_H_tmp[atom_orbitals] = H
+    new_H[:, atom_orbitals] = new_H_tmp
+    new_H = new_H.reshape(n_atom, max_block_size, n_atom, max_block_size)
+    new_H = new_H.transpose(0, 2, 1, 3)
+    if sym:
+        unit_matrix = np.ones((n_atom, n_atom))
+        # if up and down remove eye
+        upper_triangular_matrix = unit_matrix - np.triu(unit_matrix)
+        diag = new_H[np.eye(n_atom) == 1]
+        non_diag = new_H[upper_triangular_matrix == 1]
+
+        diag_mask = new_mask[np.eye(n_atom) == 1]
+        non_diag_mask = new_mask[upper_triangular_matrix == 1]
+        del new_H, new_mask, new_H_tmp, new_mask_tmp
+
+        return diag, non_diag, diag_mask, non_diag_mask
+    else:
+        unit_matrix = np.ones((n_atom, n_atom))
+        # if up and down remove eye
+        upper_triangular_matrix = unit_matrix - np.eye(len(Z))
+        # # if up remove eye
+        # upper_triangular_matrix = np.triu(unit_matrix) - np.eye(len(Z))
+        diag = new_H[np.eye(n_atom) == 1]
+        non_diag = new_H[upper_triangular_matrix == 1]
+
+        diag_mask = new_mask[np.eye(n_atom) == 1]
+        non_diag_mask = new_mask[upper_triangular_matrix == 1]
+        del new_H, new_mask, new_H_tmp, new_mask_tmp
+
+        return diag, non_diag, diag_mask, non_diag_mask
+
+
+import torch
+
+
+def block2matrix(Z, diag, non_diag, mask_lin, max_block_size, sym=False):
+    if isinstance(Z, torch.Tensor):
+        if not isinstance(mask_lin[1], torch.Tensor):
+            for key in mask_lin:
+                mask_lin[key] = torch.from_numpy(mask_lin[key])
+        Z = Z.reshape(-1)
+        n_atom = len(Z)
+        atom_orbitals = []
+        for i in range(n_atom):
+            atom_orbitals.append(i * max_block_size + mask_lin[Z[i].item()])
+        atom_orbitals = torch.cat(atom_orbitals, dim=0)
+
+        rebuild_fock = torch.zeros((n_atom, n_atom, max_block_size, max_block_size)).to(
+            Z.device
+        )
+
+        if sym:
+            ## down
+            rebuild_fock[torch.eye(n_atom) == 1] = diag
+            unit_matrix = torch.ones((n_atom, n_atom))
+            down_triangular_matrix = unit_matrix - torch.triu(unit_matrix)
+            rebuild_fock[down_triangular_matrix == 1] = 2 * non_diag
+            rebuild_fock = (
+                rebuild_fock + torch.permute(rebuild_fock, (1, 0, 3, 2))
+            ) / 2
+        else:
+            # no sym
+            rebuild_fock[torch.eye(n_atom) == 1] = diag
+            unit_matrix = torch.ones((n_atom, n_atom))
+            matrix_noeye = unit_matrix - torch.eye(len(Z))
+            rebuild_fock[matrix_noeye == 1] = non_diag
+            rebuild_fock = (
+                rebuild_fock + torch.permute(rebuild_fock, (1, 0, 3, 2))
+            ) / 2
+
+        rebuild_fock = torch.permute(rebuild_fock, (0, 2, 1, 3))
+        rebuild_fock = rebuild_fock.reshape(
+            (n_atom * max_block_size, n_atom * max_block_size)
+        )
+        rebuild_fock = rebuild_fock[atom_orbitals][:, atom_orbitals]
+        return rebuild_fock
+
+    else:
+        Z = Z.reshape(-1)
+        n_atom = len(Z)
+        atom_orbitals = []
+        for i in range(n_atom):
+            atom_orbitals.append(i * max_block_size + mask_lin[Z[i]])
+        atom_orbitals = np.concatenate(atom_orbitals, axis=0)
+        rebuild_fock = np.zeros((n_atom, n_atom, max_block_size, max_block_size))
+
+        if sym:
+            ## down
+            rebuild_fock[np.eye(n_atom) == 1] = diag
+            unit_matrix = np.ones((n_atom, n_atom))
+            down_triangular_matrix = unit_matrix - np.triu(unit_matrix)
+            rebuild_fock[down_triangular_matrix == 1] = 2 * non_diag
+            rebuild_fock = (rebuild_fock + rebuild_fock.transpose(1, 0, 3, 2)) / 2
+        else:
+            # no sym
+            rebuild_fock[np.eye(n_atom) == 1] = diag
+            unit_matrix = np.ones((n_atom, n_atom))
+            matrix_noeye = unit_matrix - np.eye(len(Z))
+            rebuild_fock[matrix_noeye == 1] = non_diag
+
+        rebuild_fock = rebuild_fock.transpose(0, 2, 1, 3)
+        rebuild_fock = rebuild_fock.reshape(
+            (n_atom * max_block_size, n_atom * max_block_size)
+        )
+        rebuild_fock = rebuild_fock[atom_orbitals][:, atom_orbitals]
+        return rebuild_fock
+
+
+@torch.jit.script
+def convert_to_single_emb(x, offset: int = 512):
+    feature_num = x.size(1) if len(x.size()) > 1 else 1
+    feature_offset = torch.arange(0, feature_num * offset, offset, dtype=torch.long)
+    x = x + feature_offset
+    return x
+
+
+POSEBUSTER_IDS = [
+    "5S8I_2LY",
+    "5SAK_ZRY",
+    "5SB2_1K2",
+    "5SD5_HWI",
+    "5SIS_JSM",
+    "6M2B_EZO",
+    "6M73_FNR",
+    "6T88_MWQ",
+    "6TW5_9M2",
+    "6TW7_NZB",
+    "6VS3_R6V",
+    "6VTA_AKN",
+    "6W59_SZD",
+    "6WTN_RXT",
+    "6X8D_ARA",
+    "6XAF_GDP",
+    "6XBO_5MC",
+    "6XCT_478",
+    "6XG5_TOP",
+    "6XHT_V2V",
+    "6XM9_V55",
+    "6XUM_30L",
+    "6Y7L_QMG",
+    "6YDY_K73",
+    "6YJA_2BA",
+    "6YMS_OZH",
+    "6YQV_8K2",
+    "6YQW_82I",
+    "6YR2_T1C",
+    "6YRV_PJ8",
+    "6YSP_PAL",
+    "6YT6_PKE",
+    "6YYO_Q1K",
+    "6Z0R_Q4H",
+    "6Z14_Q4Z",
+    "6Z1C_7EY",
+    "6Z2C_Q5E",
+    "6Z4N_Q7B",
+    "6Z5Z_BDF",
+    "6ZAE_ACV",
+    "6ZC3_JOR",
+    "6ZCY_QF8",
+    "6ZK5_IMH",
+    "6ZPB_3D1",
+    "6ZR8_QOZ",
+    "6ZT2_QPK",
+    "6ZX3_QRZ",
+    "6ZXQ_IMO",
+    "7A1P_QW2",
+    "7A9E_R4W",
+    "7A9H_TPP",
+    "7AA0_R6B",
+    "7AFX_R9K",
+    "7AKL_RK5",
+    "7AMC_73B",
+    "7AN5_RDH",
+    "7AS1_21G",
+    "7AVI_S2Q",
+    "7B0E_C2E",
+    "7B2C_TP7",
+    "7B94_ANP",
+    "7BA0_T5H",
+    "7BCP_GCO",
+    "7BHX_TO5",
+    "7BJ6_TVK",
+    "7BJJ_TVW",
+    "7BKA_4JC",
+    "7BLA_WCS",
+    "7BLG_GAL",
+    "7BMI_U4B",
+    "7BNH_BEZ",
+    "7BTT_F8R",
+    "7C0U_FGO",
+    "7C3U_AZG",
+    "7C6P_SQH",
+    "7C8Q_DSG",
+    "7CD9_FVR",
+    "7CIJ_G0C",
+    "7CL8_TES",
+    "7CNQ_G8X",
+    "7CNS_PMV",
+    "7CTM_BDP",
+    "7CUO_PHB",
+    "7D0P_1VU",
+    "7D5C_GV6",
+    "7D6O_MTE",
+    "7D8Q_GZF",
+    "7D9L_GSF",
+    "7DIN_MPO",
+    "7DKT_GLF",
+    "7DQL_4CL",
+    "7DUA_HJ0",
+    "7E2S_BLA",
+    "7E4L_MDN",
+    "7EBG_J0L",
+    "7ECR_SIN",
+    "7ED2_A3P",
+    "7ELT_TYM",
+    "7EN7_J79",
+    "7EPV_FDA",
+    "7ES1_UDP",
+    "7F51_BA7",
+    "7F5D_EUO",
+    "7F8T_FAD",
+    "7FB7_8NF",
+    "7FHA_ADX",
+    "7FRX_O88",
+    "7FT9_4MB",
+    "7JG0_GAR",
+    "7JGW_V9S",
+    "7JHQ_VAJ",
+    "7JMV_4NC",
+    "7JNB_A2G",
+    "7JR8_VH7",
+    "7JUD_MMA",
+    "7JXX_VP7",
+    "7JY3_VUD",
+    "7K0V_VQP",
+    "7K41_VUA",
+    "7KB1_WBJ",
+    "7KC5_BJZ",
+    "7KFO_IAC",
+    "7KLX_WOV",
+    "7KM8_WPD",
+    "7KP6_WTP",
+    "7KQU_YOF",
+    "7KRU_ATP",
+    "7KZ9_XN7",
+    "7L00_XCJ",
+    "7L03_F9F",
+    "7L5F_XNG",
+    "7L6D_BMF",
+    "7L7C_XQ1",
+    "7L81_UD4",
+    "7LB3_XXS",
+    "7LCU_XTA",
+    "7LEV_0JO",
+    "7LJN_GTP",
+    "7LMO_NYO",
+    "7LOE_Y84",
+    "7LOU_IFM",
+    "7LT0_ONJ",
+    "7LZD_YHY",
+    "7LZQ_YJV",
+    "7M31_TDR",
+    "7M3H_YPV",
+    "7M41_YQG",
+    "7M6K_YRJ",
+    "7MAE_XUS",
+    "7MEU_MGP",
+    "7MFP_Z7P",
+    "7MGT_ZD4",
+    "7MGY_ZD1",
+    "7MMH_ZJY",
+    "7MOI_HPS",
+    "7MRH_ZMJ",
+    "7MS7_ZQ1",
+    "7MSR_DCA",
+    "7MWN_WI5",
+    "7MWU_ZPM",
+    "7MY1_IPE",
+    "7MYU_ZR7",
+    "7MZS_GLA",
+    "7N03_ZRP",
+    "7N4N_0BK",
+    "7N4W_P4V",
+    "7N6F_0I1",
+    "7N7B_T3F",
+    "7N7H_CTP",
+    "7NA4_1I9",
+    "7NB4_U6Q",
+    "7NF0_BYN",
+    "7NF3_4LU",
+    "7NFB_GEN",
+    "7NGW_UAW",
+    "7NLK_UHK",
+    "7NLV_UJE",
+    "7NML_I7B",
+    "7NP6_UK8",
+    "7NPL_UKZ",
+    "7NR6_UO8",
+    "7NR8_UOE",
+    "7NSW_HC4",
+    "7NTG_F6R",
+    "7NU0_DCL",
+    "7NUT_GLP",
+    "7NXO_UU8",
+    "7O0N_CDP",
+    "7O1T_5X8",
+    "7OCB_V88",
+    "7ODX_DGP",
+    "7ODY_DGI",
+    "7OEO_V9Z",
+    "7OFF_VCB",
+    "7OFK_VCH",
+    "7OKC_VFE",
+    "7OKF_VH5",
+    "7OLI_8HG",
+    "7OLT_58J",
+    "7OMJ_GCP",
+    "7OMX_CNA",
+    "7OP9_06K",
+    "7OPG_06N",
+    "7ORW_7WA",
+    "7OSO_0V1",
+    "7OU8_1XI",
+    "7OZ9_NGK",
+    "7OZC_G6S",
+    "7P1F_KFN",
+    "7P1M_4IU",
+    "7P2I_MFU",
+    "7P2W_4QR",
+    "7P4C_5OV",
+    "7P4J_5JK",
+    "7P4V_DAT",
+    "7P5T_5YG",
+    "7P85_5ZG",
+    "7PA4_C",
+    "7PGX_FMN",
+    "7PIH_7QW",
+    "7PJQ_OWH",
+    "7PK0_BYC",
+    "7PL1_SFG",
+    "7POM_7VZ",
+    "7PRI_7TI",
+    "7PRM_81I",
+    "7PT3_3KK",
+    "7PUV_84Z",
+    "7Q19_DSM",
+    "7Q25_8J9",
+    "7Q27_8KC",
+    "7Q2B_M6H",
+    "7Q5I_I0F",
+    "7QE4_NGA",
+    "7QF4_RBF",
+    "7QFM_AY3",
+    "7QGP_DJ8",
+    "7QHG_T3B",
+    "7QHL_D5P",
+    "7QK0_EBL",
+    "7QPP_VDX",
+    "7QSW_CAP",
+    "7QTA_URI",
+    "7R3D_APR",
+    "7R59_I5F",
+    "7R6J_2I7",
+    "7R7R_AWJ",
+    "7R9N_F97",
+    "7RC3_SAH",
+    "7REE_4LY",
+    "7RH3_59O",
+    "7RH8_UTP",
+    "7RKW_5TV",
+    "7RNI_60I",
+    "7ROR_69X",
+    "7ROU_66I",
+    "7RPZ_6IC",
+    "7RSV_7IQ",
+    "7RUI_7QZ",
+    "7RWO_7WN",
+    "7RWS_4UR",
+    "7RZL_NPO",
+    "7S45_ACO",
+    "7S9H_7PP",
+    "7SCW_GSP",
+    "7SDD_4IP",
+    "7SED_8VD",
+    "7SFO_98L",
+    "7SGV_L30",
+    "7SIU_9ID",
+    "7SNE_9XR",
+    "7SSM_B7L",
+    "7SUC_COM",
+    "7SZA_DUI",
+    "7T0D_FPP",
+    "7T0U_E3I",
+    "7T1D_E7K",
+    "7T2I_E9F",
+    "7T3E_SLB",
+    "7T3F_EM0",
+    "7T9O_GEI",
+    "7TB0_UD1",
+    "7TBU_S3P",
+    "7TE8_P0T",
+    "7TH4_FFO",
+    "7THI_PGA",
+    "7TM6_GPJ",
+    "7TOM_5AD",
+    "7TS6_KMI",
+    "7TSF_H4B",
+    "7TUO_KL9",
+    "7TWC_CXS",
+    "7TXK_LW8",
+    "7TXP_0FX",
+    "7TYP_KUR",
+    "7U0U_FK5",
+    "7U3J_L6U",
+    "7UAS_MBU",
+    "7UAW_MF6",
+    "7UEY_N0R",
+    "7UF2_5SP",
+    "7UJ4_OQ4",
+    "7UJ5_DGL",
+    "7UJF_R3V",
+    "7ULC_56B",
+    "7UMV_NUU",
+    "7UMW_NAD",
+    "7UP3_NZ0",
+    "7UQ3_O2U",
+    "7USH_82V",
+    "7UTW_NAI",
+    "7UXS_OJC",
+    "7UY4_SMI",
+    "7UYB_OK0",
+    "7V14_ORU",
+    "7V3N_AKG",
+    "7V3S_5I9",
+    "7V43_C4O",
+    "7V8Z_5YH",
+    "7VB8_STL",
+    "7VBU_6I4",
+    "7VC5_9SF",
+    "7VJT_7IJ",
+    "7VKZ_NOJ",
+    "7VQ9_ISY",
+    "7VWF_K55",
+    "7VYJ_CA0",
+    "7W05_GMP",
+    "7W06_ITN",
+    "7W6F_8I6",
+    "7WCF_ACP",
+    "7WDT_NGS",
+    "7WJB_BGC",
+    "7WKL_CAQ",
+    "7WL4_JFU",
+    "7WN5_JGL",
+    "7WPW_F15",
+    "7WQQ_5Z6",
+    "7WUX_6OI",
+    "7WUY_76N",
+    "7WY1_D0L",
+    "7X5N_5M5",
+    "7X9K_8OG",
+    "7XBV_APC",
+    "7XEK_9YX",
+    "7XFA_D9J",
+    "7XG5_PLP",
+    "7XI7_4RI",
+    "7XIJ_EJ3",
+    "7XJN_NSD",
+    "7XPO_UPG",
+    "7XQZ_FPF",
+    "7XRL_FWK",
+    "7YZU_DO7",
+    "7Z1Q_NIO",
+    "7Z2O_IAJ",
+    "7Z7F_IF3",
+    "7ZCC_OGA",
+    "7ZDY_6MJ",
+    "7ZF0_DHR",
+    "7ZHP_IQY",
+    "7ZL5_IWE",
+    "7ZOC_T8E",
+    "7ZTL_BCN",
+    "7ZU2_DHT",
+    "7ZXV_45D",
+    "7ZXZ_K9R",
+    "7ZYS_KNR",
+    "7ZZB_KGX",
+    "7ZZW_KKW",
+    "8A1H_DLZ",
+    "8A2D_KXY",
+    "8AAU_LH0",
+    "8ACL_LQL",
+    "8AEM_LVF",
+    "8AEU_M0L",
+    "8AIE_M7L",
+    "8AIJ_M9I",
+    "8AJX_FUM",
+    "8AP0_PRP",
+    "8AQL_PLG",
+    "8AUH_L9I",
+    "8AY3_OE3",
+    "8B8H_OJQ",
+    "8BN6_R53",
+    "8BOM_QU6",
+    "8BPL_CP",
+    "8BRO_R7E",
+    "8BTI_RFO",
+    "8C3N_ADP",
+    "8C5D_GTB",
+    "8C5M_MTA",
+    "8C7Y_TXV",
+    "8CGC_LMR",
+    "8CI0_8EL",
+    "8CNH_V6U",
+    "8CSD_C5P",
+    "8D19_GSH",
+    "8D39_QDB",
+    "8D5D_5DK",
+    "8DHG_T78",
+    "8DKO_TFB",
+    "8DP2_UMA",
+    "8DSC_NCA",
+    "8DW5_FQ7",
+    "8DZT_G4P",
+    "8E77_ULP",
+    "8EAB_VN2",
+    "8EAD_UY0",
+    "8ERS_WQO",
+    "8EX2_Q2Q",
+    "8EXL_799",
+    "8EYE_X4I",
+    "8F4J_PHO",
+    "8F8E_XJI",
+    "8FAV_4Y5",
+    "8FLN_Y7W",
+    "8FLV_ZB9",
+    "8FO5_Y4U",
+    "8FV9_80J",
+    "8G0V_YHT",
+    "8G43_ZU6",
+    "8G6P_API",
+    "8GFD_ZHR",
+    "8H0M_2EH",
+    "8HFN_XGC",
+    "8HO0_3ZI",
+    "8SLG_G5A",
+]
+
+POSEBUSTER_DICT = {pose.split("_")[0]: pose.split("_")[1] for pose in POSEBUSTER_IDS}

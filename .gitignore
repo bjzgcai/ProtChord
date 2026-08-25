@@ -1,0 +1,20 @@
+# Large model artifacts are distributed separately.
+checkpoints/
+# Private SFT/DPO training data is distributed separately.
+data/**/*sft*
+data/**/*dpo*
+
+# Private checkpoint/tokenizer construction material.
+tokenizer/protchord_manifest.json
+tools/protchord_manifest.json
+tools/protchord_token_manifest.py
+tools/prune_protchord_assets.py
+tools/sanitize_inference_checkpoint.py
+tools/export_protchord_tokenizer.py
+tools/check_vocab_pruning.py
+tools/remap_lmdb_token_ids.py
+scripts/build_public_assets.sh
+
+# Local runtime files.
+__pycache__/
+*.py[cod]
