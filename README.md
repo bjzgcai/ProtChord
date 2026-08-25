@@ -175,7 +175,7 @@ export PROTCHORD_NUM_RETURN_SEQUENCES=10
 bash scripts/infer_complex.sh
 ```
 
-## File integrity
+<!-- ## File integrity
 
 The Zenodo artifact includes SHA256 checksums for the released binary files.
 
@@ -208,4 +208,4 @@ If you use ProtChord, please cite the accompanying paper:
 Please also cite the released research artifacts when using the checkpoint, processed data, or evaluation outputs:
 
 **ProtChord Research Artifacts**  
-Zenodo DOI: [10.5281/zenodo.22093629](https://doi.org/10.5281/zenodo.22093629)
+Zenodo DOI: [10.5281/zenodo.22093629](https://doi.org/10.5281/zenodo.22093629) -->
