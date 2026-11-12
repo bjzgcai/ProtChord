@@ -195,11 +195,9 @@ export PROTCHORD_NUM_RETURN_SEQUENCES=10
 bash scripts/infer_complex.sh
 ```
 
-`scripts/infer_lazy.sh` sets its output to the tracked
-`results/crossdocked_testset_100x100.pkl` and overwrites any prior
-`PROTCHORD_RESULT_PATH` value. To preserve the bundled result, run
-`scripts/infer_complex.sh` directly with a new `PROTCHORD_RESULT_PATH`, as in
-the example above.
+`scripts/infer_lazy.sh` writes to
+`results/protchord_infer_results_100x100.pkl` by default. The bundled benchmark
+result remains unchanged.
 Only load `.pkl` and `.pt` files from sources you trust; loading them can
 execute arbitrary code, including during checkpoint compatibility fallback.
 
