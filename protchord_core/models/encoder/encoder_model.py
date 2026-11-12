@@ -1,8 +1,4 @@
 # -*- coding: utf-8 -*-
-# Copyright (c) Mircrosoft.
-#
-# This source code is licensed under the MIT license found in the
-# LICENSE file in the root directory of this source tree.
 
 import os
 from contextlib import nullcontext
@@ -2137,12 +2133,6 @@ class PSM(nn.Module):
                     aa_mask,
                     pbc_expand_batched=pbc_expand_batched,
                 )
-                # import pickle
-
-                # with open(
-                #     "/home/v-zekunguo/tmp/tmp/psm/psm.batched_data.pkl", "wb"
-                # ) as f:
-                #     pickle.dump(batched_data, f)
             else:
                 (
                     token_embedding,
@@ -2267,9 +2257,6 @@ class PSM(nn.Module):
                 mixed_attn_bias=mixed_attn_bias,
                 ifbackprop=self.args.AutoGradForce,
             )
-            # torch.save(
-            #     encoder_output, "/home/v-zekunguo/tmp/tmp/psm/psm.encoder_output.pt"
-            # )
 
             with (
                 torch.cuda.amp.autocast(enabled=True, dtype=torch.float32)

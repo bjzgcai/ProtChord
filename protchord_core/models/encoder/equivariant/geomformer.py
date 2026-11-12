@@ -1,6 +1,4 @@
 # -*- coding: utf-8 -*-
-# Copyright (c) Microsoft Corporation.
-# Licensed under the MIT License.
 
 import math
 from typing import Callable, Dict, Optional, Tuple

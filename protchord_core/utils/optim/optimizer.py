@@ -1,5 +1,4 @@
 # -*- coding: utf-8 -*-
-# Copyright 2022 Microsoft Corporation.
 from typing import Callable, List, Optional, Tuple
 
 from protchord_core.logging.loggers import logger

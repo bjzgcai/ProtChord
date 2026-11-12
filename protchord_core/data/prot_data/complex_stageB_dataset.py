@@ -14,7 +14,7 @@ from typing import Any, Dict, List, Optional, Sequence, Union
 import lmdb
 import numpy as np
 from rdkit import Chem
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import Dataset
 from ogb.utils.features import atom_to_feature_vector, bond_to_feature_vector
 
 from protchord_core.data.prot_data.util import bstr2obj
@@ -919,37 +919,3 @@ class ComplexStageBDataset(Dataset):
 
     def collate(self, samples):
         return self.collate_fn(samples)
-
-
-if __name__ == "__main__":
-    # pass
-    strategy = "Zero1"
-    train_data_path = "/home/v-weizhang6/workspace/DiffAR/Data/optimize_data/train_data_test_optim.lmdb"
-    dataset = ComplexStageBDataset(
-        data_path=train_data_path,
-        model_max_length=4096,
-        protein_max_size=2048,
-        pad_token_id=128256,
-        pool_mode="full",
-        embedding_length=20,
-        num_token_id=128260, # token id of '<num>'
-        protein_pad_id=1,
-        pp_mode=(
-            strategy == "Pipeline"
-            or strategy == "ThreeD"
-        ),
-    )
-
-    dataloader = DataLoader(dataset, batch_size=4, shuffle=False, collate_fn=dataset.collate)
-    batch = next(iter(dataloader))
-
-    sample = dataset[0]
-    # print(f"len(input_ids): {len(sample['input_ids'])}")
-    # print(f"len(labels): {len(sample['labels'])}")
-    # print(f"len(psm_ids): {len(sample['psm_ids'])}")
-    # print(f"len(xyzs): {len(sample['xyzs'])}")
-    # print(f"len(position_ids): {len(sample['position_ids'])}")
-    # print(f"len(chain_ids): {len(sample['chain_ids'])}")
-    # print(f"size(adj): {sample['adj'].size()}")
-    # print(f"size(node_attr): {sample['node_attr'].size()}")
-    # print(sample)

@@ -380,12 +380,6 @@ class PSMEncoderPP(PSM):
         # import ipdb; ipdb.set_trace()
         # import pickle
 
-        # with open("/home/v-zekunguo/tmp/tmp/progpt3.pkl", "wb") as f:
-        #     pickle.dump((psm_batch_data, time_step, clean_mask, padding_mask), f)
-        # import pickle
-
-        # with open("/home/v-zekunguo/tmp/progpt/pro.pkl", "wb") as f:
-        #     pickle.dump(psm_batch_data, f)
         noise_step = None
         if self.encoder_config.diffusion_mode == "edm":
             nnodes = psm_batch_data["pos"].shape[1]
@@ -438,7 +432,6 @@ class PSMEncoderPP(PSM):
         else:
             x = None
             padding_mask = None
-        # torch.save(x, "/home/v-zekunguo/tmp/tmp/progpt5_fp32.pt")
         # exit(0)
         # print('mean and std')
         # print(f"psm mean{torch.mean(x).item()}")

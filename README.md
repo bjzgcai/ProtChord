@@ -2,9 +2,18 @@
 
 [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.22093629.svg)](https://doi.org/10.5281/zenodo.22093629)
 
-ProtChord is a protein-pocket-to-molecule generation model. This repository contains the inference code, model configuration, public tokenizer, and the CrossDocked2020 test split used by the inference workflow.
+Llama 3 ProtChord is a protein-pocket-to-molecule generation model, called
+ProtChord in the accompanying paper. This repository contains the inference
+code, model configuration, public tokenizer, and the CrossDocked2020 test split
+used by the inference workflow.
 
-The ProtChord-RL checkpoint, processed training data, and raw evaluation results are archived separately on Zenodo.
+The project is available at [weizhang-ustc/ProtChord](https://github.com/weizhang-ustc/ProtChord)
+and [bjzgcai/ProtChord](https://github.com/bjzgcai/ProtChord). Both public
+repositories shared commit `7810a98` when this release was audited; this
+checkout uses the first URL as its Git remote.
+
+The Llama 3 ProtChord-RL checkpoint, processed training data, and raw evaluation
+results are archived separately on Zenodo.
 
 ## Installation
 
@@ -20,9 +29,14 @@ The requirements intentionally contain no local editable training-framework pack
 
 The decoder starts from the LLaMA-3 vocabulary and uses a compact domain vocabulary for molecular SMILES and protein sequences: 1,401 molecular tokens, the 26 protein alphabet tokens, and modality/control markers for molecule and protein spans. The released tokenizer and checkpoint are already aligned.
 
+Built with Meta Llama 3.
+
 The model configuration is provided in `config/`.
 
-The inference checkpoint is named:
+The bundled tokenizer is derived from Llama 3 and has separate license terms;
+see [Third-party notices](THIRD-PARTY-NOTICES.md) before redistributing it.
+
+The Llama 3 ProtChord-RL inference checkpoint is named:
 
 ```text
 ProtChord_RL.pt
@@ -113,6 +127,12 @@ The CrossDocked2020 test pickle required by the inference workflow is included d
 data/crossdocked2020_test.pkl
 ```
 
+The test data and derived results originate from CrossDocked2020. Please cite
+Francoeur et al., "Three-Dimensional Convolutional Neural Networks and a
+Cross-Docked Data Set for Structure-Based Drug Design," *Journal of Chemical
+Information and Modeling* **60** (2020), 4200-4215,
+[doi:10.1021/acs.jcim.0c00411](https://doi.org/10.1021/acs.jcim.0c00411).
+
 The SFT and DPO training pickles are intentionally excluded from the GitHub repository because they are not required for inference. They are available from the associated Zenodo release:
 
 https://doi.org/10.5281/zenodo.22093629
@@ -167,7 +187,7 @@ The following environment variables can be used to control inference:
 For example:
 
 ```bash
-export PROTCHORD_RESULT_PATH=$PWD/results/ProtChord_RL_Results.pkl
+export PROTCHORD_RESULT_PATH=$PWD/results/my_inference.pkl
 export PROTCHORD_MAX_SAMPLES=100
 export PROTCHORD_NUM_SAMPLES=10
 export PROTCHORD_NUM_RETURN_SEQUENCES=10
@@ -175,7 +195,15 @@ export PROTCHORD_NUM_RETURN_SEQUENCES=10
 bash scripts/infer_complex.sh
 ```
 
-<!-- ## File integrity
+`scripts/infer_lazy.sh` sets its output to the tracked
+`results/crossdocked_testset_100x100.pkl` and overwrites any prior
+`PROTCHORD_RESULT_PATH` value. To preserve the bundled result, run
+`scripts/infer_complex.sh` directly with a new `PROTCHORD_RESULT_PATH`, as in
+the example above.
+Only load `.pkl` and `.pt` files from sources you trust; loading them can
+execute arbitrary code, including during checkpoint compatibility fallback.
+
+## File integrity
 
 The Zenodo artifact includes SHA256 checksums for the released binary files.
 
@@ -191,14 +219,6 @@ For the reconstructed checkpoint, the expected SHA256 is:
 95bbe5e288c72a6eaade1f59b67263eed61cbd259ef6652108b951231bf7ceb7
 ```
 
-## Research artifacts
-
-The model checkpoint, processed training/evaluation data, and raw evaluation outputs associated with ProtChord are available at:
-
-**Zenodo:** https://doi.org/10.5281/zenodo.22093629
-
-**Source code:** https://github.com/weizhang-ustc/ProtChord
-
 ## Citation
 
 If you use ProtChord, please cite the accompanying paper:
@@ -207,5 +227,18 @@ If you use ProtChord, please cite the accompanying paper:
 
 Please also cite the released research artifacts when using the checkpoint, processed data, or evaluation outputs:
 
-**ProtChord Research Artifacts**  
-Zenodo DOI: [10.5281/zenodo.22093629](https://doi.org/10.5281/zenodo.22093629) -->
+Zhang, W., Guo, Z., Xia, Y., Jin, P., Xie, S., Liu, Z., Li, X.-Y., and Qin, T.
+*ProtChord: Model Checkpoint, Processed Data, and Evaluation Results* (2026).
+Zenodo DOI: [10.5281/zenodo.22093629](https://doi.org/10.5281/zenodo.22093629).
+
+## License
+
+ProtChord contributions are licensed under [MIT](LICENSE). The bundled Llama 3
+derived tokenizer is covered by the [Meta Llama 3 Community License](LICENSE-META-LLAMA-3).
+Third-party code retains its own terms; see
+[Third-party notices](THIRD-PARTY-NOTICES.md).
+
+## Contact
+
+Open an issue in the [source repository](https://github.com/weizhang-ustc/ProtChord/issues)
+for questions about the code or research artifacts.

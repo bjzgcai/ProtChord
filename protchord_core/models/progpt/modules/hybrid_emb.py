@@ -425,10 +425,8 @@ class HybridEmbeddings(nn.Module):
             )  # B, T, H
             token_embed = torch.where(mol_idx_mask, pooled_rep, token_embed)
         elif self.mode == "full":
-            # torch.save({"mol_rep": mol_rep}, "/home/peiran/mnt/mntsfm2/output/mol_rep_ln_pp.pt")
             # import ipdb; ipdb.set_trace()
             mol_rep = self.mol_adaptor(mol_rep)  # [:, 1:, :]  # B, nnode, H
-            # torch.save({"mol_rep": mol_rep}, "/home/peiran/mnt/mntsfm2/output/mol_rep_ada_pp.pt")
 
             # vae noise after adaptor
             # if noise_z is not None:

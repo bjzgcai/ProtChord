@@ -16,8 +16,6 @@ def seed_everything(seed):
         torch.cuda.manual_seed_all(seed)
 from protchord_core.utils import arg_utils, dist_utils, env_init
 
-import wandb  # isort:skip
-
 
 def wandb_init(args):
     if dist_utils.is_master_node():
@@ -25,6 +23,8 @@ def wandb_init(args):
         if not wandb_api_key:
             logger.warning("Wandb not configured, logging to console only")
         else:
+            import wandb
+
             wandb.init(
                 project=args.wandb_project,
                 group=args.wandb_group,
@@ -64,6 +64,8 @@ def cli(*cfg_classes_and_funcs):
                     logger.warning("Wandb not configured, logging to console only")
                 # elif args.strategy == "DDP" or args.strategy == "Single":
                 else:
+                    import wandb
+
                     args.wandb = True
                     wandb_project = os.getenv("WANDB_PROJECT")
                     wandb_run_name = os.getenv("WANDB_RUN_NAME")
@@ -132,6 +134,8 @@ def hydracli(*cfg_classes_and_funcs, conifg_path):
                     logger.warning("Wandb not configured, logging to console only")
                 # elif args.strategy == "DDP" or args.strategy == "Single":
                 else:
+                    import wandb
+
                     args.wandb = True
                     wandb_project = os.getenv("WANDB_PROJECT")
                     wandb_run_name = os.getenv("WANDB_RUN_NAME")

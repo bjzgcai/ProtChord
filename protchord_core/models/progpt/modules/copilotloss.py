@@ -1,14 +1,10 @@
 # -*- coding: utf-8 -*-
-# Copyright (c) Microsoft Corporation.
-# Licensed under the MIT License.
 
 import torch
 import torch.distributed as dist
 import torch.nn as nn
 
 from protchord_core.logging import logger
-
-import wandb  # isort:skip
 
 
 class CopilotCriterions(nn.Module):
@@ -41,8 +37,6 @@ class CopilotCriterionsPP(CopilotCriterions):
         logits = output
         # logger.info(f"labels, {labels.shape}, logits, {logits.shape};{self.vocab_size}")
         # print(label)
-        # torch.save(label, "/home/v-zekunguo/tmp/tmp/label.pt")
-        # torch.save(logits, "/home/v-zekunguo/tmp/tmp/logits.pt")
         # exit(0)
         shift_logits = logits[..., :-1, :].contiguous()
         shift_labels = labels[..., 1:].contiguous()
@@ -91,8 +85,6 @@ class CopilotCriterionsWithVAEPP(CopilotCriterions):
         logits = output
         # logger.info(f"labels, {labels.shape}, logits, {logits.shape};{self.vocab_size}")
         # print(label)
-        # torch.save(label, "/home/v-zekunguo/tmp/tmp/label.pt")
-        # torch.save(logits, "/home/v-zekunguo/tmp/tmp/logits.pt")
         # exit(0)
         shift_logits = logits[..., :-1, :].contiguous()
         shift_labels = labels[..., 1:].contiguous()

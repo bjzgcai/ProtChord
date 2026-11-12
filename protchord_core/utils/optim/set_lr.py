@@ -1,5 +1,4 @@
 # -*- coding: utf-8 -*-
-# Copyright 2022 Microsoft Corporation.
 import math
 
 # scaling learning rate according to muP

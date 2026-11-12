@@ -10,8 +10,6 @@ from loguru import logger
 
 from protchord_core.utils.dist_utils import is_master_node
 
-import wandb  # isort:skip
-
 handlers = {}
 
 
@@ -71,7 +69,11 @@ class MetricLogger(object):
                 log_str += f" | {k}={v} "
 
         logger.info(log_str)
-        if log_wandb and wandb.run is not None:
+        if log_wandb:
+            import wandb
+
+            if wandb.run is None:
+                return
             # Add prefix
             if prefix:
                 log_data = {f"{prefix}/{k}": v for k, v in log_data.items()}
